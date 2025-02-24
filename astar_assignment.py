@@ -1,18 +1,30 @@
+import sys
+import math
 import numpy as np
 import numpy.typing as npt
 import pygame
+from queue import PriorityQueue
+from typing import Callable
+from functools import partial
 
 
 # Useful class for keeping track of the nodes being added
 class Node:
-    def __init__(self, position: tuple[int, int], parent: "Node | None" = None):
+    def __init__(
+        self,
+        position: tuple[int, int],
+        parent: "Node | None" = None,
+        h: Callable[["Node"], int] = lambda n: 0,
+    ):
         self.position = position  # Tuple (x, y)
         self.parent = parent
-        self.g = 0  # Cost from start to current node. Assume every cost is +1
-        self.h = 0  # Heuristic cost from current node to goal
-        self.f = 0  # Total cost (g + h). Key to use for the queue.
 
-    def __eq__(self, other: "object") -> bool:
+        # Cost from start to current node. Assume every cost is +1
+        self.g = parent.g + 1 if parent else sys.maxsize
+        self.h = h(self)  # Heuristic cost from current node to goal
+        self.f = self.g + self.h  # Total cost (g + h). Key to use for the queue.
+
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Node):
             return False
         return self.position == other.position
@@ -32,7 +44,7 @@ class AStar:
         self.map_resolution = 0.05  # meters
 
     # Dont NOT modify this code
-    def build_map(self):
+    def build_map(self) -> npt.NDArray[np.int_]:
         # Initialize a 30x30 map with all cells set to 0 (free space)
         # NOTE: the resolution of the map of one cell = 0.05m
         # NOTE: the index (0,0) is in the top left corner went visualized using PyGame
@@ -57,7 +69,7 @@ class AStar:
         self,
         occupancy_grid: npt.NDArray[np.int_],
         path: npt.NDArray[np.int_] | None = None,
-    ):
+    ) -> None:
 
         # Initialize Pygame
         pygame.init()
@@ -134,7 +146,7 @@ class AStar:
             for y in range(0, height, cell_size):
                 pygame.draw.line(screen, BLACK, (0, y), (width, y))
 
-            if path:
+            if not path is None:
                 for i in range(len(path)):
                     pygame.draw.rect(
                         screen,
@@ -153,18 +165,77 @@ class AStar:
         # Quit Pygame
         pygame.quit()
 
-    def heuristic(self, a: Node, b: Node):
-        # Implement your heuristic here
-        ...
+    def heuristic(self, a: Node, b: Node) -> int:
+        """L2 Distance between A and B"""
+        return int(
+            math.sqrt(
+                (b.position[0] - a.position[0]) ** 2
+                + (b.position[1] - a.position[1]) ** 2
+            )
+        )
 
-    def astar(self, occupancy_grid: npt.NDArray[np.int_]):
+    def astar(self, occupancy_grid: npt.NDArray[np.int_]) -> npt.NDArray[np.int_] | None:
         # Implement your A* search here
-        open_list = []
-        closed_list = set()
+        xg = Node(self.goal)
+        h = partial(self.heuristic, b=xg)
+        xs = Node(self.robot_start, h=h)
 
-    def add_to_open(self, open_list: set, neighbor: Node):
+        open: PriorityQueue[Node] = PriorityQueue()
+        open_set: dict[tuple[int, int], Node] = {}
+        closed: set[tuple[int, int]] = set()
+        open.put(xs)
+        open_set[xs.position] = xs
+
+        while not open.empty():
+            x = open.get()
+            del open_set[x.position]
+            closed.add(x.position)
+
+            if x.position == self.goal:
+                return self.construct_path(x)
+
+            for dir in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                pos = self.add_positions(x.position, dir)
+                if (
+                    not pos in closed
+                    and pos[0] >= 0
+                    and pos[1] >= 0
+                    and pos[0] < self.map_size[0]
+                    and pos[1] < self.map_size[1]
+                    and occupancy_grid[pos[0], pos[1]] == 0
+                ):
+                    self.add_to_open(open, open_set, Node(pos, x, h=h))
+
+        return None  # no path found
+
+    @staticmethod
+    def add_to_open(
+        open: PriorityQueue[Node],
+        open_set: dict[tuple[int, int], Node],
+        neighbor: Node,
+    ) -> None:
         # Check if a neighbor should be added to the open list.
-        ...
+        if not neighbor.position in open_set:
+            open.put(neighbor)
+            open_set[neighbor.position] = neighbor
+        elif open_set[neighbor.position].g > neighbor.g:
+            open.queue.remove(open_set[neighbor.position])
+            open.put(neighbor)
+            open_set[neighbor.position] = neighbor
+
+    @staticmethod
+    def construct_path(node: Node) -> npt.NDArray[np.int_]:
+        """backtrace parents of node to construct path to passed node"""
+        path: list[tuple[int, int]] = [node.position]
+        while node.parent:
+            node = node.parent
+            path.append(node.position)
+        path.reverse()
+        return np.array(path)
+
+    @staticmethod
+    def add_positions(p1: tuple[int, int], p2: tuple[int, int]) -> tuple[int, int]:
+        return (p1[0] + p2[0], p1[1] + p2[1])
 
 
 # Example usage
@@ -178,10 +249,10 @@ if __name__ == "__main__":
     astar_instance.visualize_map(occupancy_grid=occupancy_grid)
 
     path = astar_instance.astar(occupancy_grid)
-    if path:
+    if not path is None:
         print("Path found:", path)
     else:
-        print("No path found.") 
+        print("No path found.")
 
     # Print the solution found for your robot
     astar_instance.visualize_map(occupancy_grid=occupancy_grid, path=path)
